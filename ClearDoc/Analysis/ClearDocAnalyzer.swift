@@ -27,7 +27,7 @@ import FoundationModels
 ///   earlier content doesn't influence later analyses or fill up the
 ///   context window. This lets prewarming actually pay off, since it only
 ///   helps when it happens ahead of when a result is needed.
-public final class ClearDocAnalyzer {
+public final actor ClearDocAnalyzer {
     /// Stored so ``reset()`` can rebuild the session with the same
     /// instructions this analyzer was created with, without the caller
     /// needing to remember or re-supply them.
@@ -154,6 +154,63 @@ public final class ClearDocAnalyzer {
             throw ClearDocError.generationFailed(underlying: error)
         }
     }
+
+    /// Analyzes a block of text the same way ``analyze(_:)`` does, but
+    /// yields partial, progressively-filled-in snapshots of the result as
+    /// the model generates it, instead of waiting for the whole
+    /// ``ClearDocSummary`` to be ready.
+    ///
+    /// This wraps `FoundationModels`' own `streamResponse(to:generating:)`
+    /// rather than exposing its `LanguageModelSession.ResponseStream` type
+    /// directly, so this framework's public surface doesn't depend on the
+    /// exact shape of that type. Fields on each snapshot start out `nil`
+    /// and fill in progressively — the on-device model generates
+    /// ``ClearDocSummary``'s properties in declaration order, so `title`
+    /// tends to arrive before `plainLanguageSummary`, which arrives before
+    /// `keyPoints`, and so on.
+    ///
+    /// Input is validated up front exactly like ``analyze(_:)`` — empty or
+    /// whitespace-only text throws ``ClearDocError/emptyInput`` and
+    /// oversized text throws ``ClearDocError/inputTooLong`` before any
+    /// stream is created. Failures encountered *during* streaming are
+    /// delivered by throwing from the stream's iteration instead, using
+    /// the same error mapping ``analyze(_:)`` uses (`GenerationError`
+    /// passed through as-is, anything else wrapped as
+    /// ``ClearDocError/generationFailed``).
+    ///
+    /// - Parameter text: The raw text to analyze.
+    /// - Returns: An `AsyncThrowingStream` of progressively-filled-in
+    ///   `ClearDocSummary.PartiallyGenerated` snapshots.
+    /// - Throws: ``ClearDocError/emptyInput`` or ``ClearDocError/inputTooLong``
+    ///   if pre-flight validation fails.
+    public func analyzeStream(_ text: String) throws -> AsyncThrowingStream<ClearDocSummary.PartiallyGenerated, Error> {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmed.isEmpty else {
+            throw ClearDocError.emptyInput
+        }
+        guard trimmed.count <= Self.maxInputLength else {
+            throw ClearDocError.inputTooLong
+        }
+
+        let session = self.session
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let stream = session.streamResponse(to: text, generating: ClearDocSummary.self)
+                    for try await partial in stream {
+                        continuation.yield(partial.content)
+                    }
+                    continuation.finish()
+                } catch let error as LanguageModelSession.GenerationError {
+                    continuation.finish(throwing: error)
+                } catch {
+                    continuation.finish(throwing: ClearDocError.generationFailed(underlying: error))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 extension ClearDocAnalyzer.ClearDocError: Equatable {
@@ -171,6 +228,24 @@ extension ClearDocAnalyzer.ClearDocError: Equatable {
             return true
         default:
             return false
+        }
+    }
+}
+
+extension ClearDocAnalyzer.ClearDocError: LocalizedError {
+    /// A message suitable for showing directly to a user — for example in
+    /// a SwiftUI `.alert(_:presenting:)` bound to `error.localizedDescription`,
+    /// as `ClearDocDemo` does. Without this conformance, `localizedDescription`
+    /// falls back to a generic, unhelpful "operation couldn't be completed"
+    /// message for every case.
+    public var errorDescription: String? {
+        switch self {
+        case .emptyInput:
+            return "There's no text to analyze."
+        case .inputTooLong:
+            return "This text is too long to analyze on-device. Try a shorter excerpt."
+        case .generationFailed(let underlying):
+            return "Analysis failed: \(underlying.localizedDescription)"
         }
     }
 }

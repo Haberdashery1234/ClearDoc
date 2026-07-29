@@ -51,6 +51,28 @@ final class ClearDocAnalyzerValidationTests: XCTestCase {
             XCTFail("Expected ClearDocError.inputTooLong, got \(error)")
         }
     }
+
+    func testEmptyInputHasUserFacingDescription() {
+        XCTAssertEqual(
+            ClearDocAnalyzer.ClearDocError.emptyInput.errorDescription,
+            "There's no text to analyze."
+        )
+    }
+
+    func testInputTooLongHasUserFacingDescription() {
+        XCTAssertEqual(
+            ClearDocAnalyzer.ClearDocError.inputTooLong.errorDescription,
+            "This text is too long to analyze on-device. Try a shorter excerpt."
+        )
+    }
+
+    func testGenerationFailedDescriptionIncludesUnderlyingError() {
+        struct DummyError: LocalizedError {
+            var errorDescription: String? { "dummy failure" }
+        }
+        let description = ClearDocAnalyzer.ClearDocError.generationFailed(underlying: DummyError()).errorDescription
+        XCTAssertEqual(description, "Analysis failed: dummy failure")
+    }
 }
 
 /// Model-calling tests for ``ClearDocAnalyzer``. Written with XCTest after
@@ -122,7 +144,7 @@ final class ClearDocAnalyzerModelTests: XCTestCase {
         let analyzer = ClearDocAnalyzer()
         _ = try await analyzer.analyze(Fixture.personalHealthNote)
 
-        analyzer.reset()
+        await analyzer.reset()
 
         // Confirms reset() doesn't leave the analyzer broken — a second,
         // unrelated analysis still succeeds after resetting.

@@ -201,18 +201,15 @@ work from a clean checkout without opening the project in Xcode first.
 
 ## CI
 
-`.github/workflows/ios.yml` builds and tests the `ClearDoc` scheme on
-push/PR to `main`. The disabled model-calling tests report as skipped
-regardless of runner — there's no real device, signed-in Apple
-Intelligence, or downloaded model available in CI either way.
-
-> **Known issue:** as of this writing, `ios.yml` targets Xcode 16 /
-> `macos-15` and has an unresolved template placeholder
-> (`-buildVersion <18.1|18.2|18.3>`) in its "download platform" step —
-> this project's actual deployment target is iOS 26.5, so this workflow
-> likely won't build successfully until that's updated to an Xcode/iOS
-> version that actually matches. It also doesn't test the `ClearDocDemo`
-> scheme. Worth revisiting.
+`.github/workflows/ios.yml` builds and tests both schemes (`ClearDoc`,
+`ClearDocDemo`) on GitHub's `macos-26` runner against an iOS Simulator, on
+every push/PR to `main`. Xcode version is `latest-stable` rather than
+pinned, and the simulator is picked dynamically by UDID at runtime rather
+than hardcoded by name, so it isn't tied to exactly which iPhone model or
+iOS point release the runner image ships. The disabled model-calling
+tests report as skipped in CI, which is expected — there's no real
+device, signed-in Apple Intelligence, or downloaded model available on a
+CI runner regardless.
 
 ## Status
 

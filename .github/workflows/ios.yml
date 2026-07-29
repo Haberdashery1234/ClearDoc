@@ -5,40 +5,81 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-15
-
+  test:
+    name: Build & Test (${{ matrix.scheme }})
+    # This project's IPHONEOS_DEPLOYMENT_TARGET is 26.5 (FoundationModels
+    # requires iOS 26+), so this needs an Xcode that ships an iOS 26+ SDK.
+    # macos-26 became generally available for GitHub-hosted runners on
+    # 2026-02-26 and defaults to Xcode 26.6 — an older image/Xcode (e.g.
+    # macos-15 / Xcode 16, iOS 18 SDK) can't build this project at all.
+    runs-on: macos-26
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # ClearDoc: the framework's own unit tests (ClearDocTests).
+        # ClearDocDemo: the sample app plus its unit + UI test targets.
+        scheme: [ClearDoc, ClearDocDemo]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Cache Swift packages
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: $-spm-$
-          restore-keys: |
-            $-spm-
-
-      - name: Select Xcode 16.x
+      - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16'
+          # Tracks whatever Xcode the runner image ships as default,
+          # rather than pinning a version (e.g. 16, or a specific 26.x
+          # patch) that will inevitably drift out of sync with what's
+          # actually installed on the image.
+          xcode-version: latest-stable
 
-      - name: download platform
-        run: xcodebuild -downloadPlatform iOS -buildVersion 18.1
+      - name: Show Xcode & SDK versions
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
 
-      - name: Build
-        run: xcodebuild clean build -project ClearDoc.xcodeproj -scheme ClearDoc
+      - name: Pick an available iOS simulator
+        id: sim
+        # Looks up the first available iPhone simulator's UDID with plain
+        # text tools instead of hardcoding a destination like
+        # 'platform=iOS Simulator,OS=latest' or a specific device name —
+        # both can fail to resolve if the exact runtime/device isn't on
+        # the image, and this project has no dependency on which model
+        # or OS point release actually runs the tests.
+        run: |
+          set -euo pipefail
+          DEVICE_LINE=$(xcrun simctl list devices available | grep -m1 'iPhone' || true)
+          UDID=$(echo "$DEVICE_LINE" | grep -oE '[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}' || true)
+          if [ -z "$UDID" ]; then
+            echo "::error::No available iPhone simulator found on this runner."
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Using simulator: $DEVICE_LINE"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
-      - name: Run tests
-        run: xcodebuild test -project ClearDoc.xcodeproj -scheme ClearDoc
+      - name: Build and test — ${{ matrix.scheme }}
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ClearDoc.xcodeproj \
+            -scheme "${{ matrix.scheme }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath "TestResults-${{ matrix.scheme }}.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee "xcodebuild-${{ matrix.scheme }}.log"
 
       - name: Upload test results
+        if: always()
         uses: actions/upload-artifact@v4
-        if: failure()
         with:
-          name: test-results
-          path: DerivedData/ClearDoc/Logs/Test/*.xcresult
-
+          name: test-results-${{ matrix.scheme }}
+          path: |
+            TestResults-${{ matrix.scheme }}.xcresult
+            xcodebuild-${{ matrix.scheme }}.log
+          retention-days: 14

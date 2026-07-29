@@ -43,22 +43,25 @@ jobs:
 
       - name: Pick an available iOS simulator
         id: sim
-        # Looks up the first available iPhone simulator's UDID with plain
-        # text tools instead of hardcoding a destination like
-        # 'platform=iOS Simulator,OS=latest' or a specific device name —
-        # both can fail to resolve if the exact runtime/device isn't on
-        # the image, and this project has no dependency on which model
-        # or OS point release actually runs the tests.
+        # `xcrun simctl list devices available` lists every simulator on
+        # the runner across every installed iOS runtime, not just the one
+        # this project's scheme can actually target — that's what broke
+        # last run: it picked a device from a runtime the ClearDocDemo
+        # scheme doesn't consider a valid destination at all. Querying
+        # `xcodebuild -showdestinations` for this specific scheme instead
+        # returns only destinations that scheme can actually build/test
+        # against, which is exactly what xcodebuild itself checks against.
         run: |
           set -euo pipefail
-          DEVICE_LINE=$(xcrun simctl list devices available | grep -m1 'iPhone' || true)
-          UDID=$(echo "$DEVICE_LINE" | grep -oE '[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}' || true)
+          DESTINATION_LINE=$(xcodebuild -showdestinations -project ClearDoc.xcodeproj -scheme "${{ matrix.scheme }}" 2>/dev/null \
+            | grep 'platform:iOS Simulator' | grep 'name:iPhone' | head -n1 || true)
+          UDID=$(echo "$DESTINATION_LINE" | grep -oE 'id:[0-9A-Fa-f-]+' | cut -d: -f2 || true)
           if [ -z "$UDID" ]; then
-            echo "::error::No available iPhone simulator found on this runner."
-            xcrun simctl list devices available
+            echo "::error::No available iPhone simulator destination found for scheme ${{ matrix.scheme }}."
+            xcodebuild -showdestinations -project ClearDoc.xcodeproj -scheme "${{ matrix.scheme }}"
             exit 1
           fi
-          echo "Using simulator: $DEVICE_LINE"
+          echo "Using destination: $DESTINATION_LINE"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
       - name: Build and test — ${{ matrix.scheme }}

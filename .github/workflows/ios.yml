@@ -43,18 +43,27 @@ jobs:
 
       - name: Pick an available iOS simulator
         id: sim
-        # Looks up the first available iPhone simulator's UDID with plain
-        # text tools instead of hardcoding a destination like
-        # 'platform=iOS Simulator,OS=latest' or a specific device name —
-        # both can fail to resolve if the exact runtime/device isn't on
-        # the image, and this project has no dependency on which model
-        # or OS point release actually runs the tests.
+        # `simctl list devices available` lists every simulator on the
+        # runner across *every* installed iOS runtime, not just the one
+        # this Xcode is actually building against — grabbing the first
+        # "iPhone" line regardless of which runtime it belongs to is what
+        # produced a UDID xcodebuild rejected outright ("Unable to find a
+        # destination matching..."). Scoping the search to the runtime
+        # matching `xcrun --sdk iphonesimulator --show-sdk-version`
+        # guarantees whatever we pick is a destination this build can
+        # actually target, regardless of which scheme is being tested.
         run: |
           set -euo pipefail
-          DEVICE_LINE=$(xcrun simctl list devices available | grep -m1 'iPhone' || true)
+          SDK_VERSION=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          echo "iphonesimulator SDK version: $SDK_VERSION"
+
+          DEVICE_LINE=$(xcrun simctl list devices available | awk -v ver="$SDK_VERSION" '
+            /^-- / { grab = ($0 ~ ("iOS " ver " --")); next }
+            grab && /iPhone/ { print; exit }
+          ')
           UDID=$(echo "$DEVICE_LINE" | grep -oE '[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}' || true)
           if [ -z "$UDID" ]; then
-            echo "::error::No available iPhone simulator found on this runner."
+            echo "::error::No iPhone simulator found for iOS $SDK_VERSION on this runner."
             xcrun simctl list devices available
             exit 1
           fi

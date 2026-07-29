@@ -41,7 +41,8 @@ doesn't have to be rebuilt per app.
 ClearDoc/                   The framework itself (this is the product)
   ClearDoc.swift             Module-level overview, no real code
   Analysis/
-    ClearDocAnalyzer.swift    Entry point: analyze(_:), reset()
+    ClearDocAnalyzer.swift    Entry point: analyze(_:), analyzeStream(_:), reset()
+    ClearDocAnalyzing.swift    Protocol seam over ClearDocAnalyzer, for tests
     ClearDocAvailability.swift  Checks whether the model is usable right now
   Models/
     ClearDocSummary.swift      @Generable result type
@@ -75,7 +76,9 @@ func clarify(_ text: String) async {
         print(summary.category)       // .general, .personalHealthNote, or .medical
     } catch let error as ClearDocAnalyzer.ClearDocError {
         // .emptyInput, .inputTooLong, or .generationFailed(underlying:) —
-        // ClearDoc's own pre-flight validation, or a genuinely unexpected failure.
+        // ClearDoc's own pre-flight validation, or a genuinely unexpected
+        // failure. Conforms to LocalizedError, so error.localizedDescription
+        // is already a user-facing message, safe to show directly.
     } catch let error as LanguageModelSession.GenerationError {
         // Apple's own error type, passed through unwrapped so you can branch
         // on it directly — .refusal (safety guardrail), .exceededContextWindowSize,
@@ -96,6 +99,26 @@ case .unavailable(let reason):
 }
 ```
 
+### Streaming
+
+For a progressive UI, `analyzeStream(_:)` yields partial snapshots as the
+model generates them instead of waiting for the whole result:
+
+```swift
+for try await partial in try analyzer.analyzeStream(text) {
+    // partial.title, partial.plainLanguageSummary, etc. start out nil and
+    // fill in progressively, in the order ClearDocSummary declares them.
+}
+```
+
+### `ClearDocAnalyzer` is an actor
+
+Calls to `analyze(_:)`, `analyzeStream(_:)`, and `reset()` from outside the
+type are implicitly `await`-ed, since `ClearDocAnalyzer` is an `actor` —
+that's what makes it safe to share one instance across concurrent calls
+(e.g. a double-tapped button) without both racing to mutate the underlying
+`LanguageModelSession` at once.
+
 ### Reusing vs. resetting a session
 
 `ClearDocAnalyzer` can be used two ways, and the choice is yours depending on
@@ -106,13 +129,26 @@ what fits your app:
   from every other, at the cost of never benefiting from prewarming.
 - **Shared, long-lived** — hold one instance (e.g. `@State` in a SwiftUI
   view, as in `ClearDocDemo`) and reuse it across calls to `analyze(_:)`,
-  calling `reset()` between unrelated documents. There's no reset API on
-  `LanguageModelSession` itself — `reset()` rebuilds the session under the
-  hood with the same instructions and re-prewarms it — so callers holding a
-  shared analyzer don't need to know that detail themselves. Resetting
-  between unrelated documents avoids two problems: earlier content bleeding
-  into later analyses, and the small on-device context window (shared
-  between prompt and response) filling up with unrelated history.
+  calling `await reset()` between unrelated documents. There's no reset API
+  on `LanguageModelSession` itself — `reset()` rebuilds the session under
+  the hood with the same instructions and re-prewarms it — so callers
+  holding a shared analyzer don't need to know that detail themselves.
+  Resetting between unrelated documents avoids two problems: earlier
+  content bleeding into later analyses, and the small on-device context
+  window (shared between prompt and response) filling up with unrelated
+  history.
+
+### Testing your own code against ClearDoc
+
+Depend on `any ClearDocAnalyzing` instead of the concrete `ClearDocAnalyzer`
+if you want to fake it out in your own tests:
+
+```swift
+struct MyViewModel {
+    let analyzer: any ClearDocAnalyzing  // real ClearDocAnalyzer in the app,
+                                          // a fake returning canned results in tests
+}
+```
 
 ### A note on the safety guardrail
 
@@ -159,6 +195,8 @@ work from a clean checkout without opening the project in Xcode first.
 - **`ClearDocAvailabilityTests`** — every branch of `ClearDocAvailability`,
   exercised deterministically via a fake `LanguageModelAvailabilityProviding`
   rather than depending on the real device's actual state.
+- **`ClearDocAnalyzingTests`** — confirms a fake `ClearDocAnalyzing` actually
+  works as a stand-in for `ClearDocAnalyzer` in test code.
 - **`ClearDocCategoryTests`** — sanity check on the case list.
 
 ## CI
@@ -172,6 +210,7 @@ downloaded model available on a CI runner regardless.
 ## Status
 
 Actively developed alongside its first real consumer, SymptomSense. The
-public API (`ClearDocAnalyzer`, `ClearDocAvailability`, `ClearDocSummary`,
-`ClearDocCategory`) is implemented and documented, but this hasn't shipped in
-a production app yet — treat it as a working prototype, not a stable 1.0.
+public API (`ClearDocAnalyzer`, `ClearDocAnalyzing`, `ClearDocAvailability`,
+`ClearDocSummary`, `ClearDocCategory`) is implemented and documented, but
+this hasn't shipped in a production app yet — treat it as a working
+prototype, not a stable 1.0.

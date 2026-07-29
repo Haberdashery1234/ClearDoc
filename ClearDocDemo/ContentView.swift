@@ -287,7 +287,7 @@ struct ContentView: View {
     
     private func resetSession() {
         Task {
-            analyzer.reset()
+            await analyzer.reset()
         }
     }
     

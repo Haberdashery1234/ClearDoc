@@ -33,4 +33,4 @@ public protocol ClearDocAnalyzing: Sendable {
     func reset() async
 }
 
-extension ClearDocAnalyzer: ClearDocAnalyzing {}
+extension ClearDocAnalyzer: @preconcurrency ClearDocAnalyzing {}

@@ -1,0 +1,44 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: $-spm-$
+          restore-keys: |
+            $-spm-
+
+      - name: Select Xcode 16.x
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16'
+
+      - name: download platform
+        run: xcodebuild -downloadPlatform iOS -buildVersion <18.1|18.2|18.3>
+
+      - name: Build
+        run: xcodebuild clean build -project ClearDoc.xcodeproj -scheme ClearDoc -destination 'platform=iOS Simulator,OS=latest'
+
+      - name: Run tests
+        run: xcodebuild test -project ClearDoc.xcodeproj -scheme ClearDoc -destination 'platform=iOS Simulator,OS=latest'
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: DerivedData/ClearDoc/Logs/Test/*.xcresult
+

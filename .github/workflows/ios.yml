@@ -27,13 +27,13 @@ jobs:
           xcode-version: '16'
 
       - name: download platform
-        run: xcodebuild -downloadPlatform iOS -buildVersion <18.1|18.2|18.3>
+        run: xcodebuild -downloadPlatform iOS -buildVersion 18.1
 
       - name: Build
-        run: xcodebuild clean build -project ClearDoc.xcodeproj -scheme ClearDoc -destination 'platform=iOS Simulator,OS=latest'
+        run: xcodebuild clean build -project ClearDoc.xcodeproj -scheme ClearDoc
 
       - name: Run tests
-        run: xcodebuild test -project ClearDoc.xcodeproj -scheme ClearDoc -destination 'platform=iOS Simulator,OS=latest'
+        run: xcodebuild test -project ClearDoc.xcodeproj -scheme ClearDoc
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

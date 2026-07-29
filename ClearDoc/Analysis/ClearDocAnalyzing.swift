@@ -27,7 +27,7 @@ public protocol ClearDocAnalyzing: Sendable {
     func analyze(_ text: String) async throws -> ClearDocSummary
 
     /// See ``ClearDocAnalyzer/analyzeStream(_:)``.
-    func analyzeStream(_ text: String) throws -> AsyncThrowingStream<ClearDocSummary.PartiallyGenerated, Error>
+    func analyzeStream(_ text: String) async throws -> AsyncThrowingStream<ClearDocSummary.PartiallyGenerated, Error>
 
     /// See ``ClearDocAnalyzer/reset()``.
     func reset() async
